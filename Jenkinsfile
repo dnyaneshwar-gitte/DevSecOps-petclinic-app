@@ -161,7 +161,7 @@ pipeline {
                 bat """
                 docker rm -f petclinic-zap-test || exit /b 0
                 docker run -d --name petclinic-zap-test -p 8081:8080 %IMAGE_NAME%:%IMAGE_TAG%
-                timeout /t 40
+                ping 127.0.0.1 -n 41 > nul
                 """
             }
         }
