@@ -27,18 +27,18 @@ pipeline {
 
         stage('Unit Test') {
             steps {
-                sh 'mvn test'
+                bat 'mvn test'
             }
         }
 
         stage('SonarQube SAST') {
             steps {
                 withSonarQubeEnv('SonarQube') {
-                    sh '''
-                        mvn clean verify sonar:sonar \
-                        -Dsonar.projectKey=devsecops-petclinic \
-                        -Dsonar.projectName=devsecops-petclinic
-                    '''
+                    bat """
+                    mvn clean verify sonar:sonar ^
+                    -Dsonar.projectKey=devsecops-petclinic ^
+                    -Dsonar.projectName=devsecops-petclinic
+                    """
                 }
             }
         }
@@ -53,11 +53,11 @@ pipeline {
 
         stage('OWASP Dependency Check') {
             steps {
-                sh '''
-                    mvn org.owasp:dependency-check-maven:check \
-                    -Dformat=HTML \
-                    -DfailBuildOnCVSS=7
-                '''
+                bat """
+                mvn org.owasp:dependency-check-maven:check ^
+                -Dformat=HTML ^
+                -DfailBuildOnCVSS=7
+                """
             }
             post {
                 always {
@@ -68,16 +68,17 @@ pipeline {
 
         stage('Build WAR Package') {
             steps {
-                sh 'mvn clean package -DskipTests'
+                bat 'mvn clean package -DskipTests'
             }
         }
 
         stage('Hadolint Dockerfile Scan') {
             steps {
-                sh '''
-                    docker run --rm -i hadolint/hadolint < Dockerfile > hadolint-report.txt || true
-                    cat hadolint-report.txt
-                '''
+                bat """
+                docker run --rm -i hadolint/hadolint < Dockerfile > hadolint-report.txt
+                type hadolint-report.txt
+                exit /b 0
+                """
             }
             post {
                 always {
@@ -88,46 +89,46 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh '''
-                    echo "Building Docker image..."
-                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
-                    docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:latest
-                '''
+                bat """
+                echo Building Docker image...
+                docker build -t %IMAGE_NAME%:%IMAGE_TAG% .
+                docker tag %IMAGE_NAME%:%IMAGE_TAG% %IMAGE_NAME%:latest
+                """
             }
         }
 
         stage('Trivy Image Scan') {
             steps {
-                sh '''
-                    docker run --rm \
-                    -v /var/run/docker.sock:/var/run/docker.sock \
-                    -v $WORKSPACE:/workspace \
-                    aquasec/trivy:latest image \
-                    --severity HIGH,CRITICAL \
-                    --format json \
-                    --output /workspace/trivy-report.json \
-                    ${IMAGE_NAME}:${IMAGE_TAG}
+                bat """
+                docker run --rm ^
+                -v //var/run/docker.sock:/var/run/docker.sock ^
+                -v "%WORKSPACE%":/workspace ^
+                aquasec/trivy:latest image ^
+                --severity HIGH,CRITICAL ^
+                --format json ^
+                --output /workspace/trivy-report.json ^
+                %IMAGE_NAME%:%IMAGE_TAG%
 
-                    docker run --rm \
-                    -v $WORKSPACE:/workspace \
-                    aquasec/trivy:latest convert \
-                    --format table \
-                    --output /workspace/trivy-report.txt \
-                    /workspace/trivy-report.json
+                docker run --rm ^
+                -v "%WORKSPACE%":/workspace ^
+                aquasec/trivy:latest convert ^
+                --format table ^
+                --output /workspace/trivy-report.txt ^
+                /workspace/trivy-report.json
 
-                    docker run --rm \
-                    -v $WORKSPACE:/workspace \
-                    pandoc/core:latest \
-                    /workspace/trivy-report.txt \
-                    -o /workspace/trivy-report.pdf
+                docker run --rm ^
+                -v "%WORKSPACE%":/workspace ^
+                pandoc/core:latest ^
+                /workspace/trivy-report.txt ^
+                -o /workspace/trivy-report.pdf
 
-                    docker run --rm \
-                    -v /var/run/docker.sock:/var/run/docker.sock \
-                    aquasec/trivy:latest image \
-                    --severity HIGH,CRITICAL \
-                    --exit-code 1 \
-                    ${IMAGE_NAME}:${IMAGE_TAG}
-                '''
+                docker run --rm ^
+                -v //var/run/docker.sock:/var/run/docker.sock ^
+                aquasec/trivy:latest image ^
+                --severity HIGH,CRITICAL ^
+                --exit-code 1 ^
+                %IMAGE_NAME%:%IMAGE_TAG%
+                """
             }
             post {
                 always {
