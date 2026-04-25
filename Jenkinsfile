@@ -16,6 +16,8 @@ pipeline {
         ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
         IMAGE_NAME = "${ECR_REGISTRY}/${ECR_REPO_NAME}"
         IMAGE_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
+
+        MVN = 'C:\\ProgramData\\chocolatey\\lib\\maven\\apache-maven-3.9.15\\bin\\mvn.cmd'
     }
 
     stages {
@@ -27,7 +29,7 @@ pipeline {
 
         stage('Unit Test') {
             steps {
-                bat 'mvn test'
+                bat '"%MVN%" test'
             }
         }
 
@@ -35,7 +37,7 @@ pipeline {
             steps {
                 withSonarQubeEnv('SonarQube') {
                     bat """
-                    mvn clean verify sonar:sonar ^
+                    "%MVN%" clean verify sonar:sonar ^
                     -Dsonar.projectKey=devsecops-petclinic ^
                     -Dsonar.projectName=devsecops-petclinic
                     """
@@ -54,7 +56,7 @@ pipeline {
         stage('OWASP Dependency Check') {
             steps {
                 bat """
-                mvn org.owasp:dependency-check-maven:check ^
+                "%MVN%" org.owasp:dependency-check-maven:check ^
                 -Dformat=HTML ^
                 -DfailBuildOnCVSS=7
                 """
@@ -68,7 +70,7 @@ pipeline {
 
         stage('Build WAR Package') {
             steps {
-                bat 'mvn clean package -DskipTests'
+                bat '"%MVN%" clean package -DskipTests'
             }
         }
 
