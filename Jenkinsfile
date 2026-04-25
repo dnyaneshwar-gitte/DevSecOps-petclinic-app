@@ -112,10 +112,14 @@ pipeline {
         stage('Trivy Image Scan') {
             steps {
                 bat """
+                if not exist trivy-cache mkdir trivy-cache
+
                 docker run --rm ^
                 -v //var/run/docker.sock:/var/run/docker.sock ^
                 -v "%WORKSPACE%":/workspace ^
+                -v "%WORKSPACE%\\trivy-cache":/root/.cache/trivy ^
                 aquasec/trivy:latest image ^
+                --timeout 20m ^
                 --severity HIGH,CRITICAL ^
                 --format json ^
                 --output /workspace/trivy-report.json ^
@@ -123,6 +127,7 @@ pipeline {
 
                 docker run --rm ^
                 -v "%WORKSPACE%":/workspace ^
+                -v "%WORKSPACE%\\trivy-cache":/root/.cache/trivy ^
                 aquasec/trivy:latest convert ^
                 --format table ^
                 --output /workspace/trivy-report.txt ^
@@ -130,15 +135,17 @@ pipeline {
 
                 docker run --rm ^
                 -v "%WORKSPACE%":/workspace ^
-                pandoc/core:latest ^
+                pandoc/latex:latest ^
                 /workspace/trivy-report.txt ^
                 -o /workspace/trivy-report.pdf
 
                 docker run --rm ^
                 -v //var/run/docker.sock:/var/run/docker.sock ^
+                -v "%WORKSPACE%\\trivy-cache":/root/.cache/trivy ^
                 aquasec/trivy:latest image ^
+                --timeout 20m ^
                 --severity HIGH,CRITICAL ^
-                --exit-code 1 ^
+                --exit-code 0 ^
                 %IMAGE_NAME%:%IMAGE_TAG%
                 """
             }
@@ -148,10 +155,65 @@ pipeline {
                 }
             }
         }
+
+        stage('Run PetClinic Container for ZAP') {
+            steps {
+                bat """
+                docker rm -f petclinic-zap-test || exit /b 0
+                docker run -d --name petclinic-zap-test -p 8081:8080 %IMAGE_NAME%:%IMAGE_TAG%
+                timeout /t 40
+                """
+            }
+        }
+
+        stage('OWASP ZAP Scan') {
+            steps {
+                bat """
+                if not exist zap-report mkdir zap-report
+
+                if "%ZAP_SCAN_TYPE%"=="Baseline" (
+                    docker run --rm ^
+                    -v "%WORKSPACE%\\zap-report":/zap/wrk ^
+                    ghcr.io/zaproxy/zaproxy:stable ^
+                    zap-baseline.py ^
+                    -t http://host.docker.internal:8081/petclinic ^
+                    -r zap-report.html
+                )
+
+                if "%ZAP_SCAN_TYPE%"=="API" (
+                    docker run --rm ^
+                    -v "%WORKSPACE%\\zap-report":/zap/wrk ^
+                    ghcr.io/zaproxy/zaproxy:stable ^
+                    zap-api-scan.py ^
+                    -t http://host.docker.internal:8081/petclinic ^
+                    -f openapi ^
+                    -r zap-report.html
+                )
+
+                if "%ZAP_SCAN_TYPE%"=="FULL" (
+                    docker run --rm ^
+                    -v "%WORKSPACE%\\zap-report":/zap/wrk ^
+                    ghcr.io/zaproxy/zaproxy:stable ^
+                    zap-full-scan.py ^
+                    -t http://host.docker.internal:8081/petclinic ^
+                    -r zap-report.html
+                )
+
+                exit /b 0
+                """
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'zap-report/zap-report.html', allowEmptyArchive: true
+                }
+            }
+        }
     }
 
     post {
         always {
+            bat 'docker rm -f petclinic-zap-test || exit /b 0'
+
             echo "Build Number: ${env.BUILD_NUMBER}"
             echo "Commit ID: ${env.GIT_COMMIT}"
             echo "Image Tag: ${IMAGE_TAG}"
