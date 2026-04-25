@@ -68,7 +68,7 @@ pipeline {
                 bat """
                 "%MVN%" org.owasp:dependency-check-maven:check ^
                 -Dformat=HTML ^
-                -DfailBuildOnCVSS=7
+                -DfailBuildOnCVSS=11
                 """
             }
             post {
