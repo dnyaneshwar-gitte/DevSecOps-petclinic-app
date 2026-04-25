@@ -39,7 +39,9 @@ pipeline {
                     bat """
                     "%MVN%" clean verify sonar:sonar ^
                     -Dsonar.projectKey=devsecops-petclinic ^
-                    -Dsonar.projectName=devsecops-petclinic
+                    -Dsonar.projectName=devsecops-petclinic ^
+                    -Dsonar.qualitygate.wait=true ^
+                    -Dsonar.qualitygate.timeout=1200
                     """
                 }
             }
@@ -47,8 +49,16 @@ pipeline {
 
         stage('SonarQube Quality Gate') {
             steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
+                script {
+                    timeout(time: 20, unit: 'MINUTES') {
+                        def qg = waitForQualityGate abortPipeline: false
+
+                        if (qg.status != 'OK') {
+                            error "Pipeline failed because SonarQube Quality Gate status is: ${qg.status}"
+                        }
+
+                        echo "SonarQube Quality Gate passed: ${qg.status}"
+                    }
                 }
             }
         }
