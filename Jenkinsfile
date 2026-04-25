@@ -15,6 +15,7 @@ pipeline {
         AWS_ACCOUNT_ID = '038462753889'
         ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
         IMAGE_NAME = "${ECR_REGISTRY}/${ECR_REPO_NAME}"
+        IMAGE_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
     }
 
     stages {
@@ -24,36 +25,114 @@ pipeline {
             }
         }
 
-        stage('Set Image Tag') {
+        stage('Unit Test') {
             steps {
-                script {
-                    env.SHORT_COMMIT = env.GIT_COMMIT.take(7)
-                    env.IMAGE_TAG = "${env.BUILD_NUMBER}-${env.SHORT_COMMIT}"
+                sh 'mvn test'
+            }
+        }
+
+        stage('SonarQube SAST') {
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    sh '''
+                        mvn clean verify sonar:sonar \
+                        -Dsonar.projectKey=devsecops-petclinic \
+                        -Dsonar.projectName=devsecops-petclinic
+                    '''
                 }
             }
         }
 
-        stage('Unit Test') {
+        stage('SonarQube Quality Gate') {
             steps {
-                bat 'mvn test'
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('OWASP Dependency Check') {
+            steps {
+                sh '''
+                    mvn org.owasp:dependency-check-maven:check \
+                    -Dformat=HTML \
+                    -DfailBuildOnCVSS=7
+                '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'target/dependency-check-report.html', allowEmptyArchive: true
+                }
             }
         }
 
         stage('Build WAR Package') {
             steps {
-                bat 'mvn clean package -DskipTests'
+                sh 'mvn clean package -DskipTests'
+            }
+        }
+
+        stage('Hadolint Dockerfile Scan') {
+            steps {
+                sh '''
+                    docker run --rm -i hadolint/hadolint < Dockerfile > hadolint-report.txt || true
+                    cat hadolint-report.txt
+                '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'hadolint-report.txt', allowEmptyArchive: true
+                }
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                bat """
-                echo Building Docker image...
-                echo Image: %IMAGE_NAME%:%IMAGE_TAG%
+                sh '''
+                    echo "Building Docker image..."
+                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                    docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:latest
+                '''
+            }
+        }
 
-                docker build -t %IMAGE_NAME%:%IMAGE_TAG% .
-                docker tag %IMAGE_NAME%:%IMAGE_TAG% %IMAGE_NAME%:latest
-                """
+        stage('Trivy Image Scan') {
+            steps {
+                sh '''
+                    docker run --rm \
+                    -v /var/run/docker.sock:/var/run/docker.sock \
+                    -v $WORKSPACE:/workspace \
+                    aquasec/trivy:latest image \
+                    --severity HIGH,CRITICAL \
+                    --format json \
+                    --output /workspace/trivy-report.json \
+                    ${IMAGE_NAME}:${IMAGE_TAG}
+
+                    docker run --rm \
+                    -v $WORKSPACE:/workspace \
+                    aquasec/trivy:latest convert \
+                    --format table \
+                    --output /workspace/trivy-report.txt \
+                    /workspace/trivy-report.json
+
+                    docker run --rm \
+                    -v $WORKSPACE:/workspace \
+                    pandoc/core:latest \
+                    /workspace/trivy-report.txt \
+                    -o /workspace/trivy-report.pdf
+
+                    docker run --rm \
+                    -v /var/run/docker.sock:/var/run/docker.sock \
+                    aquasec/trivy:latest image \
+                    --severity HIGH,CRITICAL \
+                    --exit-code 1 \
+                    ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'trivy-report.json,trivy-report.txt,trivy-report.pdf', allowEmptyArchive: true
+                }
             }
         }
     }
@@ -62,15 +141,15 @@ pipeline {
         always {
             echo "Build Number: ${env.BUILD_NUMBER}"
             echo "Commit ID: ${env.GIT_COMMIT}"
-            echo "Image Tag: ${env.IMAGE_TAG}"
+            echo "Image Tag: ${IMAGE_TAG}"
         }
 
         success {
-            echo "Pipeline completed successfully"
+            echo "Security pipeline completed successfully"
         }
 
         failure {
-            echo "Pipeline failed"
+            echo "Security pipeline failed"
         }
     }
 }
