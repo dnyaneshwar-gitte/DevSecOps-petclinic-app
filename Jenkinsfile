@@ -121,23 +121,11 @@ pipeline {
                 aquasec/trivy:latest image ^
                 --timeout 20m ^
                 --severity HIGH,CRITICAL ^
-                --format json ^
-                --output /workspace/trivy-report.json ^
-                %IMAGE_NAME%:%IMAGE_TAG%
-
-                docker run --rm ^
-                -v "%WORKSPACE%":/workspace ^
-                -v "%WORKSPACE%\\trivy-cache":/root/.cache/trivy ^
-                aquasec/trivy:latest convert ^
                 --format table ^
                 --output /workspace/trivy-report.txt ^
-                /workspace/trivy-report.json
+                %IMAGE_NAME%:%IMAGE_TAG%
 
-                docker run --rm ^
-                -v "%WORKSPACE%":/workspace ^
-                pandoc/latex:latest ^
-                /workspace/trivy-report.txt ^
-                -o /workspace/trivy-report.pdf
+                type trivy-report.txt
 
                 docker run --rm ^
                 -v //var/run/docker.sock:/var/run/docker.sock ^
@@ -151,7 +139,7 @@ pipeline {
             }
             post {
                 always {
-                    archiveArtifacts artifacts: 'trivy-report.json,trivy-report.txt,trivy-report.pdf', allowEmptyArchive: true
+                    archiveArtifacts artifacts: 'trivy-report.txt', allowEmptyArchive: true
                 }
             }
         }
