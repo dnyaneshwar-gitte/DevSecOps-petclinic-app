@@ -119,21 +119,23 @@ pipeline {
                 bat """
                 if not exist trivy-cache mkdir trivy-cache
 
-                echo =============================== > trivy-report.txt
-                echo Trivy Image Scan Report >> trivy-report.txt
-                echo Image: %IMAGE_NAME%:%IMAGE_TAG% >> trivy-report.txt
-                echo Severity: HIGH, CRITICAL >> trivy-report.txt
-                echo =============================== >> trivy-report.txt
-                echo. >> trivy-report.txt
-
                 docker run --rm ^
                 -v //var/run/docker.sock:/var/run/docker.sock ^
+                -v "%WORKSPACE%":/workspace ^
                 -v "%WORKSPACE%\\trivy-cache":/root/.cache/trivy ^
                 aquasec/trivy:latest image ^
                 --timeout 20m ^
                 --severity HIGH,CRITICAL ^
-                --no-progress ^
-                %IMAGE_NAME%:%IMAGE_TAG% >> trivy-report.txt
+                --format json ^
+                --output /workspace/trivy-raw.json ^
+                %IMAGE_NAME%:%IMAGE_TAG%
+
+                echo Trivy Image Scan Report > trivy-report.txt
+                echo Image: %IMAGE_NAME%:%IMAGE_TAG% >> trivy-report.txt
+                echo Severity Checked: HIGH, CRITICAL >> trivy-report.txt
+                echo. >> trivy-report.txt
+
+                powershell -NoProfile -Command "if ((Get-Content trivy-raw.json -Raw) -match '\\\"Vulnerabilities\\\"') { 'HIGH/CRITICAL vulnerabilities found. Open trivy-raw.json for details.' | Out-File trivy-report.txt -Append } else { 'PASS - No HIGH or CRITICAL vulnerabilities found.' | Out-File trivy-report.txt -Append }"
 
                 type trivy-report.txt
 
@@ -155,59 +157,59 @@ pipeline {
             }
         }
 
-        stage('Run PetClinic Container for ZAP') {
-            steps {
-                bat """
-                docker rm -f petclinic-zap-test || exit /b 0
-                docker run -d --name petclinic-zap-test -p 8081:8080 %IMAGE_NAME%:%IMAGE_TAG%
-                ping 127.0.0.1 -n 41 > nul
-                """
-            }
-        }
+                stage('Run PetClinic Container for ZAP') {
+                    steps {
+                        bat """
+                        docker rm -f petclinic-zap-test || exit /b 0
+                        docker run -d --name petclinic-zap-test -p 8081:8080 %IMAGE_NAME%:%IMAGE_TAG%
+                        ping 127.0.0.1 -n 41 > nul
+                        """
+                    }
+                }
 
-        stage('OWASP ZAP Scan') {
-            steps {
-                bat """
-                if not exist zap-report mkdir zap-report
+                stage('OWASP ZAP Scan') {
+                    steps {
+                        bat """
+                        if not exist zap-report mkdir zap-report
 
-                if "%ZAP_SCAN_TYPE%"=="Baseline" (
-                    docker run --rm ^
-                    -v "%WORKSPACE%\\zap-report":/zap/wrk ^
-                    ghcr.io/zaproxy/zaproxy:stable ^
-                    zap-baseline.py ^
-                    -t http://host.docker.internal:8081/ ^
-                    -r zap-report.html
-                )
+                        if "%ZAP_SCAN_TYPE%"=="Baseline" (
+                            docker run --rm ^
+                            -v "%WORKSPACE%\\zap-report":/zap/wrk ^
+                            ghcr.io/zaproxy/zaproxy:stable ^
+                            zap-baseline.py ^
+                            -t http://host.docker.internal:8081/ ^
+                            -r zap-report.html
+                        )
 
-                if "%ZAP_SCAN_TYPE%"=="API" (
-                    docker run --rm ^
-                    -v "%WORKSPACE%\\zap-report":/zap/wrk ^
-                    ghcr.io/zaproxy/zaproxy:stable ^
-                    zap-api-scan.py ^
-                    -t http://host.docker.internal:8081/ ^
-                    -f openapi ^
-                    -r zap-report.html
-                )
+                        if "%ZAP_SCAN_TYPE%"=="API" (
+                            docker run --rm ^
+                            -v "%WORKSPACE%\\zap-report":/zap/wrk ^
+                            ghcr.io/zaproxy/zaproxy:stable ^
+                            zap-api-scan.py ^
+                            -t http://host.docker.internal:8081/ ^
+                            -f openapi ^
+                            -r zap-report.html
+                        )
 
-                if "%ZAP_SCAN_TYPE%"=="FULL" (
-                    docker run --rm ^
-                    -v "%WORKSPACE%\\zap-report":/zap/wrk ^
-                    ghcr.io/zaproxy/zaproxy:stable ^
-                    zap-full-scan.py ^
-                    -t http://host.docker.internal:8081/ ^
-                    -r zap-report.html
-                )
+                        if "%ZAP_SCAN_TYPE%"=="FULL" (
+                            docker run --rm ^
+                            -v "%WORKSPACE%\\zap-report":/zap/wrk ^
+                            ghcr.io/zaproxy/zaproxy:stable ^
+                            zap-full-scan.py ^
+                            -t http://host.docker.internal:8081/ ^
+                            -r zap-report.html
+                        )
 
-                exit /b 0
-                """
-            }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'zap-report/zap-report.html', allowEmptyArchive: true
+                        exit /b 0
+                        """
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'zap-report/zap-report.html', allowEmptyArchive: true
+                        }
+                    }
                 }
             }
-        }
-    }
 
     post {
         always {
