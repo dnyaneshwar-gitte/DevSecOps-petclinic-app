@@ -119,56 +119,21 @@ pipeline {
                 bat """
                 if not exist trivy-cache mkdir trivy-cache
 
+                echo =============================== > trivy-report.txt
+                echo Trivy Image Scan Report >> trivy-report.txt
+                echo Image: %IMAGE_NAME%:%IMAGE_TAG% >> trivy-report.txt
+                echo Severity: HIGH, CRITICAL >> trivy-report.txt
+                echo =============================== >> trivy-report.txt
+                echo. >> trivy-report.txt
+
                 docker run --rm ^
                 -v //var/run/docker.sock:/var/run/docker.sock ^
-                -v "%WORKSPACE%":/workspace ^
                 -v "%WORKSPACE%\\trivy-cache":/root/.cache/trivy ^
                 aquasec/trivy:latest image ^
                 --timeout 20m ^
                 --severity HIGH,CRITICAL ^
-                --format json ^
-                --output /workspace/trivy-raw.json ^
-                %IMAGE_NAME%:%IMAGE_TAG%
-
-                powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-                "$json = Get-Content 'trivy-raw.json' -Raw | ConvertFrom-Json; ^
-                'Trivy Image Vulnerability Scan Report' | Out-File 'trivy-report.txt'; ^
-                'Image: %IMAGE_NAME%:%IMAGE_TAG%' | Out-File 'trivy-report.txt' -Append; ^
-                'Severity Checked: HIGH, CRITICAL' | Out-File 'trivy-report.txt' -Append; ^
-                '' | Out-File 'trivy-report.txt' -Append; ^
-                $totalHigh = 0; $totalCritical = 0; ^
-                foreach ($r in $json.Results) { ^
-                    if ($r.Vulnerabilities) { ^
-                        foreach ($v in $r.Vulnerabilities) { ^
-                            if ($v.Severity -eq 'HIGH') { $totalHigh++ } ^
-                            if ($v.Severity -eq 'CRITICAL') { $totalCritical++ } ^
-                        } ^
-                    } ^
-                } ^
-                'High Vulnerabilities: ' + $totalHigh | Out-File 'trivy-report.txt' -Append; ^
-                'Critical Vulnerabilities: ' + $totalCritical | Out-File 'trivy-report.txt' -Append; ^
-                '' | Out-File 'trivy-report.txt' -Append; ^
-                if (($totalHigh + $totalCritical) -eq 0) { ^
-                    'Result: PASS - No HIGH or CRITICAL vulnerabilities found.' | Out-File 'trivy-report.txt' -Append ^
-                } else { ^
-                    'Result: FAIL - HIGH or CRITICAL vulnerabilities found.' | Out-File 'trivy-report.txt' -Append; ^
-                    '' | Out-File 'trivy-report.txt' -Append; ^
-                    foreach ($r in $json.Results) { ^
-                        if ($r.Vulnerabilities) { ^
-                            foreach ($v in $r.Vulnerabilities) { ^
-                                if ($v.Severity -eq 'HIGH' -or $v.Severity -eq 'CRITICAL') { ^
-                                    ('Target: ' + $r.Target) | Out-File 'trivy-report.txt' -Append; ^
-                                    ('Package: ' + $v.PkgName) | Out-File 'trivy-report.txt' -Append; ^
-                                    ('Vulnerability: ' + $v.VulnerabilityID) | Out-File 'trivy-report.txt' -Append; ^
-                                    ('Severity: ' + $v.Severity) | Out-File 'trivy-report.txt' -Append; ^
-                                    ('Installed Version: ' + $v.InstalledVersion) | Out-File 'trivy-report.txt' -Append; ^
-                                    ('Fixed Version: ' + $v.FixedVersion) | Out-File 'trivy-report.txt' -Append; ^
-                                    '' | Out-File 'trivy-report.txt' -Append ^
-                                } ^
-                            } ^
-                        } ^
-                    } ^
-                }"
+                --no-progress ^
+                %IMAGE_NAME%:%IMAGE_TAG% >> trivy-report.txt
 
                 type trivy-report.txt
 
@@ -179,6 +144,7 @@ pipeline {
                 --timeout 20m ^
                 --severity HIGH,CRITICAL ^
                 --exit-code 1 ^
+                --no-progress ^
                 %IMAGE_NAME%:%IMAGE_TAG%
                 """
             }
