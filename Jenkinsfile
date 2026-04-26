@@ -16,7 +16,6 @@ pipeline {
         ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
         IMAGE_NAME = "${ECR_REGISTRY}/${ECR_REPO_NAME}"
         IMAGE_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
-
         MVN = 'C:\\ProgramData\\chocolatey\\lib\\maven\\apache-maven-3.9.15\\bin\\mvn.cmd'
     }
 
@@ -52,11 +51,9 @@ pipeline {
                 script {
                     timeout(time: 20, unit: 'MINUTES') {
                         def qg = waitForQualityGate abortPipeline: false
-
                         if (qg.status != 'OK') {
                             error "Pipeline failed because SonarQube Quality Gate status is: ${qg.status}"
                         }
-
                         echo "SonarQube Quality Gate passed: ${qg.status}"
                     }
                 }
@@ -68,7 +65,7 @@ pipeline {
                 bat """
                 "%MVN%" org.owasp:dependency-check-maven:check ^
                 -Dformat=HTML ^
-                -DfailBuildOnCVSS=11
+                -DfailBuildOnCVSS=7
                 """
             }
             post {
@@ -87,7 +84,15 @@ pipeline {
         stage('Hadolint Dockerfile Scan') {
             steps {
                 bat """
-                docker run --rm -i hadolint/hadolint < Dockerfile > hadolint-report.txt
+                echo Hadolint Dockerfile Scan Report > hadolint-report.txt
+                echo Dockerfile: Dockerfile >> hadolint-report.txt
+                echo. >> hadolint-report.txt
+
+                docker run --rm -i hadolint/hadolint < Dockerfile >> hadolint-report.txt
+
+                echo. >> hadolint-report.txt
+                echo Scan completed. If no issues are listed above, Dockerfile passed Hadolint check. >> hadolint-report.txt
+
                 type hadolint-report.txt
                 exit /b 0
                 """
@@ -114,19 +119,56 @@ pipeline {
                 bat """
                 if not exist trivy-cache mkdir trivy-cache
 
-                echo Trivy Scan Report > trivy-report.txt
-                echo Image: %IMAGE_NAME%:%IMAGE_TAG% >> trivy-report.txt
-                echo Severity: HIGH,CRITICAL >> trivy-report.txt
-                echo. >> trivy-report.txt
-
                 docker run --rm ^
                 -v //var/run/docker.sock:/var/run/docker.sock ^
+                -v "%WORKSPACE%":/workspace ^
                 -v "%WORKSPACE%\\trivy-cache":/root/.cache/trivy ^
                 aquasec/trivy:latest image ^
                 --timeout 20m ^
                 --severity HIGH,CRITICAL ^
-                --exit-code 0 ^
-                %IMAGE_NAME%:%IMAGE_TAG% >> trivy-report.txt
+                --format json ^
+                --output /workspace/trivy-raw.json ^
+                %IMAGE_NAME%:%IMAGE_TAG%
+
+                powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+                "$json = Get-Content 'trivy-raw.json' -Raw | ConvertFrom-Json; ^
+                'Trivy Image Vulnerability Scan Report' | Out-File 'trivy-report.txt'; ^
+                'Image: %IMAGE_NAME%:%IMAGE_TAG%' | Out-File 'trivy-report.txt' -Append; ^
+                'Severity Checked: HIGH, CRITICAL' | Out-File 'trivy-report.txt' -Append; ^
+                '' | Out-File 'trivy-report.txt' -Append; ^
+                $totalHigh = 0; $totalCritical = 0; ^
+                foreach ($r in $json.Results) { ^
+                    if ($r.Vulnerabilities) { ^
+                        foreach ($v in $r.Vulnerabilities) { ^
+                            if ($v.Severity -eq 'HIGH') { $totalHigh++ } ^
+                            if ($v.Severity -eq 'CRITICAL') { $totalCritical++ } ^
+                        } ^
+                    } ^
+                } ^
+                'High Vulnerabilities: ' + $totalHigh | Out-File 'trivy-report.txt' -Append; ^
+                'Critical Vulnerabilities: ' + $totalCritical | Out-File 'trivy-report.txt' -Append; ^
+                '' | Out-File 'trivy-report.txt' -Append; ^
+                if (($totalHigh + $totalCritical) -eq 0) { ^
+                    'Result: PASS - No HIGH or CRITICAL vulnerabilities found.' | Out-File 'trivy-report.txt' -Append ^
+                } else { ^
+                    'Result: FAIL - HIGH or CRITICAL vulnerabilities found.' | Out-File 'trivy-report.txt' -Append; ^
+                    '' | Out-File 'trivy-report.txt' -Append; ^
+                    foreach ($r in $json.Results) { ^
+                        if ($r.Vulnerabilities) { ^
+                            foreach ($v in $r.Vulnerabilities) { ^
+                                if ($v.Severity -eq 'HIGH' -or $v.Severity -eq 'CRITICAL') { ^
+                                    ('Target: ' + $r.Target) | Out-File 'trivy-report.txt' -Append; ^
+                                    ('Package: ' + $v.PkgName) | Out-File 'trivy-report.txt' -Append; ^
+                                    ('Vulnerability: ' + $v.VulnerabilityID) | Out-File 'trivy-report.txt' -Append; ^
+                                    ('Severity: ' + $v.Severity) | Out-File 'trivy-report.txt' -Append; ^
+                                    ('Installed Version: ' + $v.InstalledVersion) | Out-File 'trivy-report.txt' -Append; ^
+                                    ('Fixed Version: ' + $v.FixedVersion) | Out-File 'trivy-report.txt' -Append; ^
+                                    '' | Out-File 'trivy-report.txt' -Append ^
+                                } ^
+                            } ^
+                        } ^
+                    } ^
+                }"
 
                 type trivy-report.txt
 
@@ -167,7 +209,7 @@ pipeline {
                     -v "%WORKSPACE%\\zap-report":/zap/wrk ^
                     ghcr.io/zaproxy/zaproxy:stable ^
                     zap-baseline.py ^
-                    -t http://host.docker.internal:8081/petclinic ^
+                    -t http://host.docker.internal:8081/ ^
                     -r zap-report.html
                 )
 
@@ -176,7 +218,7 @@ pipeline {
                     -v "%WORKSPACE%\\zap-report":/zap/wrk ^
                     ghcr.io/zaproxy/zaproxy:stable ^
                     zap-api-scan.py ^
-                    -t http://host.docker.internal:8081/petclinic ^
+                    -t http://host.docker.internal:8081/ ^
                     -f openapi ^
                     -r zap-report.html
                 )
@@ -186,7 +228,7 @@ pipeline {
                     -v "%WORKSPACE%\\zap-report":/zap/wrk ^
                     ghcr.io/zaproxy/zaproxy:stable ^
                     zap-full-scan.py ^
-                    -t http://host.docker.internal:8081/petclinic ^
+                    -t http://host.docker.internal:8081/ ^
                     -r zap-report.html
                 )
 
