@@ -121,7 +121,7 @@ pipeline {
                 aquasec/trivy:latest image ^
                 --timeout 20m ^
                 --severity HIGH,CRITICAL ^
-                --format table ^
+                --format json ^
                 --output /workspace/trivy-report.txt ^
                 %IMAGE_NAME%:%IMAGE_TAG%
 
@@ -133,7 +133,7 @@ pipeline {
                 aquasec/trivy:latest image ^
                 --timeout 20m ^
                 --severity HIGH,CRITICAL ^
-                --exit-code 0 ^
+                --exit-code 1 ^
                 %IMAGE_NAME%:%IMAGE_TAG%
                 """
             }
