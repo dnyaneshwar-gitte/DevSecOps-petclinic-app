@@ -114,16 +114,19 @@ pipeline {
                 bat """
                 if not exist trivy-cache mkdir trivy-cache
 
+                echo Trivy Scan Report > trivy-report.txt
+                echo Image: %IMAGE_NAME%:%IMAGE_TAG% >> trivy-report.txt
+                echo Severity: HIGH,CRITICAL >> trivy-report.txt
+                echo. >> trivy-report.txt
+
                 docker run --rm ^
                 -v //var/run/docker.sock:/var/run/docker.sock ^
-                -v "%WORKSPACE%":/workspace ^
                 -v "%WORKSPACE%\\trivy-cache":/root/.cache/trivy ^
                 aquasec/trivy:latest image ^
                 --timeout 20m ^
                 --severity HIGH,CRITICAL ^
-                --format table ^
-                --output /workspace/trivy-report.txt ^
-                %IMAGE_NAME%:%IMAGE_TAG%
+                --exit-code 0 ^
+                %IMAGE_NAME%:%IMAGE_TAG% >> trivy-report.txt
 
                 type trivy-report.txt
 
