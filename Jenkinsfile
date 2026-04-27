@@ -18,7 +18,6 @@ pipeline {
         IMAGE_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
         MVN = 'C:\\ProgramData\\chocolatey\\lib\\maven\\apache-maven-3.9.15\\bin\\mvn.cmd'
         EMAIL_TO = 'dnyaneshwarg535@gmail.com'
-        APP_URL = 'http://petclinic-test:8080/petclinic'
     }
 
     stages {
@@ -44,20 +43,6 @@ pipeline {
                     -Dsonar.qualitygate.wait=true ^
                     -Dsonar.qualitygate.timeout=1200
                     """
-                }
-            }
-        }
-
-        stage('SonarQube Quality Gate') {
-            steps {
-                script {
-                    timeout(time: 20, unit: 'MINUTES') {
-                        def qg = waitForQualityGate abortPipeline: false
-                        if (qg.status != 'OK') {
-                            error "Pipeline failed because SonarQube Quality Gate status is: ${qg.status}"
-                        }
-                        echo "SonarQube Quality Gate passed: ${qg.status}"
-                    }
                 }
             }
         }
@@ -93,7 +78,7 @@ pipeline {
                 docker run --rm -i hadolint/hadolint < Dockerfile >> hadolint-report.txt
 
                 echo. >> hadolint-report.txt
-                echo Scan completed. If no issues are listed above, Dockerfile passed Hadolint check. >> hadolint-report.txt
+                echo Scan completed. >> hadolint-report.txt
 
                 type hadolint-report.txt
                 exit /b 0
@@ -116,7 +101,7 @@ pipeline {
             }
         }
 
-        stage("TRIVY") {
+        stage('Trivy Image Scan') {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                     bat """
@@ -133,61 +118,60 @@ pipeline {
             }
         }
 
-                stage('Run PetClinic Container for ZAP') {
-                    steps {
-                        bat """
-                        docker rm -f petclinic-zap-test || exit /b 0
-                        docker run -d --name petclinic-zap-test -p 8081:8080 %IMAGE_NAME%:%IMAGE_TAG%
-                        ping 127.0.0.1 -n 41 > nul
-                        """
-                    }
-                }
+        stage('Run PetClinic Container for ZAP') {
+            steps {
+                bat """
+                docker rm -f petclinic-zap-test || exit /b 0
+                docker run -d --name petclinic-zap-test -p 8081:8080 %IMAGE_NAME%:%IMAGE_TAG%
+                ping 127.0.0.1 -n 41 > nul
+                """
+            }
+        }
 
-                stage('OWASP ZAP Scan') {
-                    steps {
-                        bat """
-                        if not exist zap-report mkdir zap-report
+        stage('OWASP ZAP Scan') {
+            steps {
+                bat """
+                if not exist zap-report mkdir zap-report
 
-                        if "%ZAP_SCAN_TYPE%"=="Baseline" (
-                            docker run --rm ^
-                            -v "%WORKSPACE%\\zap-report":/zap/wrk ^
-                            ghcr.io/zaproxy/zaproxy:stable ^
-                            zap-baseline.py ^
-                            -t http://host.docker.internal:8081/ ^
-                            -r zap-report.html
-                        )
+                if "%ZAP_SCAN_TYPE%"=="Baseline" (
+                    docker run --rm ^
+                    -v "%WORKSPACE%\\zap-report":/zap/wrk ^
+                    ghcr.io/zaproxy/zaproxy:stable ^
+                    zap-baseline.py ^
+                    -t http://host.docker.internal:8081/ ^
+                    -r zap-report.html
+                )
 
-                        if "%ZAP_SCAN_TYPE%"=="API" (
-                            docker run --rm ^
-                            -v "%WORKSPACE%\\zap-report":/zap/wrk ^
-                            ghcr.io/zaproxy/zaproxy:stable ^
-                            zap-api-scan.py ^
-                            -t http://host.docker.internal:8081/ ^
-                            -f openapi ^
-                            -r zap-report.html
-                        )
+                if "%ZAP_SCAN_TYPE%"=="API" (
+                    docker run --rm ^
+                    -v "%WORKSPACE%\\zap-report":/zap/wrk ^
+                    ghcr.io/zaproxy/zaproxy:stable ^
+                    zap-api-scan.py ^
+                    -t http://host.docker.internal:8081/ ^
+                    -f openapi ^
+                    -r zap-report.html
+                )
 
-                        if "%ZAP_SCAN_TYPE%"=="FULL" (
-                            docker run --rm ^
-                            -v "%WORKSPACE%\\zap-report":/zap/wrk ^
-                            ghcr.io/zaproxy/zaproxy:stable ^
-                            zap-full-scan.py ^
-                            -t http://host.docker.internal:8081/ ^
-                            -r zap-report.html
-                        )
+                if "%ZAP_SCAN_TYPE%"=="FULL" (
+                    docker run --rm ^
+                    -v "%WORKSPACE%\\zap-report":/zap/wrk ^
+                    ghcr.io/zaproxy/zaproxy:stable ^
+                    zap-full-scan.py ^
+                    -t http://host.docker.internal:8081/ ^
+                    -r zap-report.html
+                )
 
-                        exit /b 0
-                        """
-                    }
-                    post {
-                        always {
-                            archiveArtifacts artifacts: 'zap-report/zap-report.html', allowEmptyArchive: true
-                        }
-                    }
+                exit /b 0
+                """
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'zap-report/zap-report.html', allowEmptyArchive: true
                 }
             }
+        }
 
-            stage('Login to ECR') {
+        stage('Login to ECR') {
             steps {
                 withCredentials([[
                     $class: 'AmazonWebServicesCredentialsBinding',
@@ -195,20 +179,19 @@ pipeline {
                     accessKeyVariable: 'AWS_ACCESS_KEY_ID',
                     secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
-                    sh '''
-                        aws ecr get-login-password --region ${AWS_REGION} | \
-                        docker login --username AWS --password-stdin ${ECR_REGISTRY}
-                    '''
+                    bat """
+                    aws ecr get-login-password --region %AWS_REGION% | docker login --username AWS --password-stdin %ECR_REGISTRY%
+                    """
                 }
             }
         }
 
         stage('Push Docker Image to ECR') {
             steps {
-                sh '''
-                    docker push ${IMAGE_NAME}:${IMAGE_TAG}
-                    docker push ${IMAGE_NAME}:latest
-                '''
+                bat """
+                docker push %IMAGE_NAME%:%IMAGE_TAG%
+                docker push %IMAGE_NAME%:latest
+                """
             }
         }
     }
@@ -216,6 +199,8 @@ pipeline {
     post {
         always {
             bat 'docker rm -f petclinic-zap-test || exit /b 0'
+
+            archiveArtifacts artifacts: 'hadolint-report.txt,zap-report/zap-report.html,target/dependency-check-report.html', allowEmptyArchive: true
 
             echo "Build Number: ${env.BUILD_NUMBER}"
             echo "Commit ID: ${env.GIT_COMMIT}"
