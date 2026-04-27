@@ -117,7 +117,16 @@ pipeline {
         stage("TRIVY") {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                    sh "sudo trivy image --no-progress --exit-code 1 --severity MEDIUM,HIGH,CRITICAL --format table ${IMAGE_NAME}"
+                    bat """
+                    docker run --rm ^
+                    -v //var/run/docker.sock:/var/run/docker.sock ^
+                    aquasec/trivy:latest image ^
+                    --no-progress ^
+                    --exit-code 1 ^
+                    --severity MEDIUM,HIGH,CRITICAL ^
+                    --format table ^
+                    %IMAGE_NAME%:%IMAGE_TAG%
+                    """
                 }
             }
         }
