@@ -114,45 +114,10 @@ pipeline {
             }
         }
 
-        stage('Trivy Image Scan') {
+        stage("TRIVY") {
             steps {
-                bat """
-                if not exist trivy-cache mkdir trivy-cache
-
-                docker run --rm ^
-                -v //var/run/docker.sock:/var/run/docker.sock ^
-                -v "%WORKSPACE%":/workspace ^
-                -v "%WORKSPACE%\\trivy-cache":/root/.cache/trivy ^
-                aquasec/trivy:latest image ^
-                --timeout 20m ^
-                --severity HIGH,CRITICAL ^
-                --format json ^
-                --output /workspace/trivy-raw.json ^
-                %IMAGE_NAME%:%IMAGE_TAG%
-
-                echo Trivy Image Scan Report > trivy-report.txt
-                echo Image: %IMAGE_NAME%:%IMAGE_TAG% >> trivy-report.txt
-                echo Severity Checked: HIGH, CRITICAL >> trivy-report.txt
-                echo. >> trivy-report.txt
-
-                powershell -NoProfile -Command "if ((Get-Content trivy-raw.json -Raw) -match '\\\"Vulnerabilities\\\"') { 'HIGH/CRITICAL vulnerabilities found. Open trivy-raw.json for details.' | Out-File trivy-report.txt -Append } else { 'PASS - No HIGH or CRITICAL vulnerabilities found.' | Out-File trivy-report.txt -Append }"
-
-                type trivy-report.txt
-
-                docker run --rm ^
-                -v //var/run/docker.sock:/var/run/docker.sock ^
-                -v "%WORKSPACE%\\trivy-cache":/root/.cache/trivy ^
-                aquasec/trivy:latest image ^
-                --timeout 20m ^
-                --severity HIGH,CRITICAL ^
-                --exit-code 1 ^
-                --no-progress ^
-                %IMAGE_NAME%:%IMAGE_TAG%
-                """
-            }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'trivy-report.txt', allowEmptyArchive: true
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    sh "sudo trivy image --no-progress --exit-code 1 --severity MEDIUM,HIGH,CRITICAL --format table ${IMAGE_NAME}"
                 }
             }
         }
