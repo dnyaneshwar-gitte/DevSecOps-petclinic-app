@@ -17,6 +17,8 @@ pipeline {
         IMAGE_NAME = "${ECR_REGISTRY}/${ECR_REPO_NAME}"
         IMAGE_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
         MVN = 'C:\\ProgramData\\chocolatey\\lib\\maven\\apache-maven-3.9.15\\bin\\mvn.cmd'
+        EMAIL_TO = 'dnyaneshwarg535@gmail.com'
+        APP_URL = 'http://petclinic-test:8080/petclinic'
     }
 
     stages {
