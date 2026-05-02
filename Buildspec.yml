@@ -12,6 +12,7 @@ env:
   secrets-manager:
     SONAR_TOKEN: "sonarqube-token:squ_7c5fa6ce1566f90c99bed6fb2ccc5d1a97998f24"
 
+
 phases:
   install:
     commands:
