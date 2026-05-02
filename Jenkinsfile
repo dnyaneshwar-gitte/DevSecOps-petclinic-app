@@ -110,11 +110,26 @@ pipeline {
         stage('Trivy Scan') {
             steps {
                 sh '''
+                mkdir -p trivy-report
+
                 trivy image \
-                  --severity HIGH,CRITICAL \
-                  --exit-code 1 \
-                  ${IMAGE_NAME}:${IMAGE_TAG}
+                --severity HIGH,CRITICAL \
+                --format table \
+                --output trivy-report/trivy-report.txt \
+                ${IMAGE_NAME}:${IMAGE_TAG}
+
+                cat trivy-report/trivy-report.txt
+
+                trivy image \
+                --severity HIGH,CRITICAL \
+                --exit-code 1 \
+                ${IMAGE_NAME}:${IMAGE_TAG}
                 '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'trivy-report/trivy-report.txt', allowEmptyArchive: true
+                }
             }
         }
 
