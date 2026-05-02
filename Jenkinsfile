@@ -15,8 +15,7 @@ pipeline {
         AWS_ACCOUNT_ID = '038462753889'
         ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
         IMAGE_NAME = "${ECR_REGISTRY}/${ECR_REPO_NAME}"
-        IMAGE_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
-        MVN = 'Maven'
+        MVN = 'mvn'
         EMAIL_TO = 'dnyaneshwarg535@gmail.com'
     }
 
@@ -25,6 +24,13 @@ pipeline {
         stage('Checkout Code') {
             steps {
                 checkout scm
+                script {
+                    env.SHORT_COMMIT = sh(
+                        script: "git rev-parse --short HEAD",
+                        returnStdout: true
+                    ).trim()
+                    env.IMAGE_TAG = "${BUILD_NUMBER}-${SHORT_COMMIT}"
+                }
             }
         }
 
@@ -71,11 +77,11 @@ pipeline {
 
         stage('Hadolint Dockerfile Scan') {
             steps {
-                sh """
+                sh '''
                 echo "Hadolint Dockerfile Scan Report" > hadolint-report.txt
                 docker run --rm -i hadolint/hadolint < Dockerfile >> hadolint-report.txt
                 cat hadolint-report.txt
-                """
+                '''
             }
             post {
                 always {
@@ -87,7 +93,6 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 sh """
-                echo "Building Docker image..."
                 docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
                 docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:latest
                 """
@@ -122,10 +127,10 @@ pipeline {
 
         stage('OWASP ZAP Scan') {
             steps {
-                sh """
+                sh '''
                 mkdir -p zap-report
 
-                if [ "${ZAP_SCAN_TYPE}" = "Baseline" ]; then
+                if [ "$ZAP_SCAN_TYPE" = "Baseline" ]; then
                     docker run --rm \
                     -v $(pwd)/zap-report:/zap/wrk \
                     ghcr.io/zaproxy/zaproxy:stable \
@@ -134,7 +139,7 @@ pipeline {
                     -r zap-report.html
                 fi
 
-                if [ "${ZAP_SCAN_TYPE}" = "API" ]; then
+                if [ "$ZAP_SCAN_TYPE" = "API" ]; then
                     docker run --rm \
                     -v $(pwd)/zap-report:/zap/wrk \
                     ghcr.io/zaproxy/zaproxy:stable \
@@ -144,7 +149,7 @@ pipeline {
                     -r zap-report.html
                 fi
 
-                if [ "${ZAP_SCAN_TYPE}" = "FULL" ]; then
+                if [ "$ZAP_SCAN_TYPE" = "FULL" ]; then
                     docker run --rm \
                     -v $(pwd)/zap-report:/zap/wrk \
                     ghcr.io/zaproxy/zaproxy:stable \
@@ -152,7 +157,7 @@ pipeline {
                     -t http://localhost:8081/ \
                     -r zap-report.html
                 fi
-                """
+                '''
             }
             post {
                 always {
@@ -194,8 +199,8 @@ pipeline {
             archiveArtifacts artifacts: 'hadolint-report.txt,zap-report/zap-report.html,target/dependency-check-report.html', allowEmptyArchive: true
 
             echo "Build Number: ${env.BUILD_NUMBER}"
-            echo "Commit ID: ${env.GIT_COMMIT}"
-            echo "Image Tag: ${IMAGE_TAG}"
+            echo "Commit ID: ${env.SHORT_COMMIT}"
+            echo "Image Tag: ${env.IMAGE_TAG}"
         }
 
         success {
