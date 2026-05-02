@@ -70,7 +70,7 @@ pipeline {
         stage('OWASP Dependency Check') {
             steps {
                 sh '''
-                ./mvnw org.owasp:dependency-check-maven:check \
+                ${MVN} org.owasp:dependency-check-maven:check \
                 -Dformat=HTML \
                 -DfailBuildOnCVSS=7
                 '''
