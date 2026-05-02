@@ -16,11 +16,12 @@ pipeline {
         ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
         IMAGE_NAME = "${ECR_REGISTRY}/${ECR_REPO_NAME}"
         IMAGE_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
-        MVN = 'C:\\ProgramData\\chocolatey\\lib\\maven\\apache-maven-3.9.15\\bin\\mvn.cmd'
+        MVN = 'Maven'
         EMAIL_TO = 'dnyaneshwarg535@gmail.com'
     }
 
     stages {
+
         stage('Checkout Code') {
             steps {
                 checkout scm
@@ -29,18 +30,18 @@ pipeline {
 
         stage('Unit Test') {
             steps {
-                bat '"%MVN%" test'
+                sh '${MVN} test'
             }
         }
 
         stage('SonarQube SAST') {
             steps {
                 withSonarQubeEnv('SonarQube') {
-                    bat """
-                    "%MVN%" clean verify sonar:sonar ^
-                    -Dsonar.projectKey=devsecops-petclinic ^
-                    -Dsonar.projectName=devsecops-petclinic ^
-                    -Dsonar.qualitygate.wait=true ^
+                    sh """
+                    ${MVN} clean verify sonar:sonar \
+                    -Dsonar.projectKey=devsecops-petclinic \
+                    -Dsonar.projectName=devsecops-petclinic \
+                    -Dsonar.qualitygate.wait=true \
                     -Dsonar.qualitygate.timeout=1200
                     """
                 }
@@ -49,9 +50,9 @@ pipeline {
 
         stage('OWASP Dependency Check') {
             steps {
-                bat """
-                "%MVN%" org.owasp:dependency-check-maven:check ^
-                -Dformat=HTML ^
+                sh """
+                ${MVN} org.owasp:dependency-check-maven:check \
+                -Dformat=HTML \
                 -DfailBuildOnCVSS=11
                 """
             }
@@ -64,24 +65,16 @@ pipeline {
 
         stage('Build WAR Package') {
             steps {
-                bat '"%MVN%" clean package -DskipTests'
+                sh '${MVN} clean package -DskipTests'
             }
         }
 
         stage('Hadolint Dockerfile Scan') {
             steps {
-                bat """
-                echo Hadolint Dockerfile Scan Report > hadolint-report.txt
-                echo Dockerfile: Dockerfile >> hadolint-report.txt
-                echo. >> hadolint-report.txt
-
+                sh """
+                echo "Hadolint Dockerfile Scan Report" > hadolint-report.txt
                 docker run --rm -i hadolint/hadolint < Dockerfile >> hadolint-report.txt
-
-                echo. >> hadolint-report.txt
-                echo Scan completed. >> hadolint-report.txt
-
-                type hadolint-report.txt
-                exit /b 0
+                cat hadolint-report.txt
                 """
             }
             post {
@@ -93,10 +86,10 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                bat """
-                echo Building Docker image...
-                docker build -t %IMAGE_NAME%:%IMAGE_TAG% .
-                docker tag %IMAGE_NAME%:%IMAGE_TAG% %IMAGE_NAME%:latest
+                sh """
+                echo "Building Docker image..."
+                docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:latest
                 """
             }
         }
@@ -104,15 +97,14 @@ pipeline {
         stage('Trivy Image Scan') {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                    bat """
-                    docker run --rm ^
-                    -v //var/run/docker.sock:/var/run/docker.sock ^
-                    aquasec/trivy:latest image ^
-                    --no-progress ^
-                    --exit-code 1 ^
-                    --severity MEDIUM,HIGH,CRITICAL ^
-                    --format table ^
-                    %IMAGE_NAME%:%IMAGE_TAG%
+                    sh """
+                    docker run --rm \
+                    -v /var/run/docker.sock:/var/run/docker.sock \
+                    aquasec/trivy:latest image \
+                    --no-progress \
+                    --exit-code 1 \
+                    --severity MEDIUM,HIGH,CRITICAL \
+                    ${IMAGE_NAME}:${IMAGE_TAG}
                     """
                 }
             }
@@ -120,48 +112,46 @@ pipeline {
 
         stage('Run PetClinic Container for ZAP') {
             steps {
-                bat """
-                docker rm -f petclinic-zap-test || exit /b 0
-                docker run -d --name petclinic-zap-test -p 8081:8080 %IMAGE_NAME%:%IMAGE_TAG%
-                ping 127.0.0.1 -n 41 > nul
+                sh """
+                docker rm -f petclinic-zap-test || true
+                docker run -d --name petclinic-zap-test -p 8081:8080 ${IMAGE_NAME}:${IMAGE_TAG}
+                sleep 40
                 """
             }
         }
 
         stage('OWASP ZAP Scan') {
             steps {
-                bat """
-                if not exist zap-report mkdir zap-report
+                sh """
+                mkdir -p zap-report
 
-                if "%ZAP_SCAN_TYPE%"=="Baseline" (
-                    docker run --rm ^
-                    -v "%WORKSPACE%\\zap-report":/zap/wrk ^
-                    ghcr.io/zaproxy/zaproxy:stable ^
-                    zap-baseline.py ^
-                    -t http://host.docker.internal:8081/ ^
+                if [ "${ZAP_SCAN_TYPE}" = "Baseline" ]; then
+                    docker run --rm \
+                    -v $(pwd)/zap-report:/zap/wrk \
+                    ghcr.io/zaproxy/zaproxy:stable \
+                    zap-baseline.py \
+                    -t http://localhost:8081/ \
                     -r zap-report.html
-                )
+                fi
 
-                if "%ZAP_SCAN_TYPE%"=="API" (
-                    docker run --rm ^
-                    -v "%WORKSPACE%\\zap-report":/zap/wrk ^
-                    ghcr.io/zaproxy/zaproxy:stable ^
-                    zap-api-scan.py ^
-                    -t http://host.docker.internal:8081/ ^
-                    -f openapi ^
+                if [ "${ZAP_SCAN_TYPE}" = "API" ]; then
+                    docker run --rm \
+                    -v $(pwd)/zap-report:/zap/wrk \
+                    ghcr.io/zaproxy/zaproxy:stable \
+                    zap-api-scan.py \
+                    -t http://localhost:8081/ \
+                    -f openapi \
                     -r zap-report.html
-                )
+                fi
 
-                if "%ZAP_SCAN_TYPE%"=="FULL" (
-                    docker run --rm ^
-                    -v "%WORKSPACE%\\zap-report":/zap/wrk ^
-                    ghcr.io/zaproxy/zaproxy:stable ^
-                    zap-full-scan.py ^
-                    -t http://host.docker.internal:8081/ ^
+                if [ "${ZAP_SCAN_TYPE}" = "FULL" ]; then
+                    docker run --rm \
+                    -v $(pwd)/zap-report:/zap/wrk \
+                    ghcr.io/zaproxy/zaproxy:stable \
+                    zap-full-scan.py \
+                    -t http://localhost:8081/ \
                     -r zap-report.html
-                )
-
-                exit /b 0
+                fi
                 """
             }
             post {
@@ -179,8 +169,9 @@ pipeline {
                     accessKeyVariable: 'AWS_ACCESS_KEY_ID',
                     secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
                 ]]) {
-                    bat """
-                    aws ecr get-login-password --region %AWS_REGION% | docker login --username AWS --password-stdin %ECR_REGISTRY%
+                    sh """
+                    aws ecr get-login-password --region ${AWS_REGION} | \
+                    docker login --username AWS --password-stdin ${ECR_REGISTRY}
                     """
                 }
             }
@@ -188,9 +179,9 @@ pipeline {
 
         stage('Push Docker Image to ECR') {
             steps {
-                bat """
-                docker push %IMAGE_NAME%:%IMAGE_TAG%
-                docker push %IMAGE_NAME%:latest
+                sh """
+                docker push ${IMAGE_NAME}:${IMAGE_TAG}
+                docker push ${IMAGE_NAME}:latest
                 """
             }
         }
@@ -198,7 +189,7 @@ pipeline {
 
     post {
         always {
-            bat 'docker rm -f petclinic-zap-test || exit /b 0'
+            sh 'docker rm -f petclinic-zap-test || true'
 
             archiveArtifacts artifacts: 'hadolint-report.txt,zap-report/zap-report.html,target/dependency-check-report.html', allowEmptyArchive: true
 
