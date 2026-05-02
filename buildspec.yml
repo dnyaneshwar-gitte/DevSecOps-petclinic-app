@@ -66,8 +66,11 @@ phases:
       - docker build -t $IMAGE_NAME:$IMAGE_TAG .
       - docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest
 
-      - echo Running Trivy scan
-      - trivy image --severity HIGH,CRITICAL --exit-code 1 $IMAGE_NAME:$IMAGE_TAG
+      - echo "================ TRIVY SCAN START ================"
+      - trivy image --severity HIGH,CRITICAL --no-progress $IMAGE_NAME:$IMAGE_TAG
+      - echo "================ TRIVY FAIL CHECK ================"
+      - trivy image --severity HIGH,CRITICAL --exit-code 1 --no-progress $IMAGE_NAME:$IMAGE_TAG
+      - echo "================ TRIVY SCAN END =================="
 
       - echo Running app container for ZAP scan
       - docker rm -f petclinic-zap-test || true
