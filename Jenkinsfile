@@ -110,19 +110,13 @@ pipeline {
         stage('Trivy Scan') {
             steps {
                 sh '''
-                mkdir -p trivy-report
+                echo "==== TRIVY REPORT ===="
 
-                trivy image \
-                --severity HIGH,CRITICAL \
-                --format table \
-                --no-progress \
-                ${IMAGE_NAME}:${IMAGE_TAG} | tee trivy-report/trivy-report.txt
+                trivy image --severity HIGH,CRITICAL --no-progress ${IMAGE_NAME}:${IMAGE_TAG}
 
-                trivy image \
-                --severity HIGH,CRITICAL \
-                --exit-code 1 \
-                --no-progress \
-                ${IMAGE_NAME}:${IMAGE_TAG}
+                echo "==== FAIL CHECK ===="
+
+                trivy image --severity HIGH,CRITICAL --exit-code 1 --no-progress ${IMAGE_NAME}:${IMAGE_TAG}
                 '''
             }
             post {
