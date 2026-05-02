@@ -57,7 +57,7 @@ pipeline {
 
         stage('SonarQube SAST') {
             steps {
-                withSonarQubeEnv('SonarQube-server') {
+                withSonarQubeEnv('SonarQube-Server') {
                     sh '''
                     ${MVN} clean verify sonar:sonar \
                     -Dsonar.projectKey=devsecops-petclinic \
