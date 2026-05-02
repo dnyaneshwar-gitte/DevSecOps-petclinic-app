@@ -1,0 +1,131 @@
+version: 0.2
+
+env:
+  variables:
+    AWS_REGION: us-east-1
+    AWS_ACCOUNT_ID: "038462753889"
+    ECR_REPO_NAME: devsecops-petclinic
+    SONAR_HOST_URL: "http://54.81.35.190:9000"
+    SONAR_PROJECT_KEY: devsecops-petclinic
+    SONAR_PROJECT_NAME: devsecops-petclinic
+    ZAP_SCAN_TYPE: Baseline
+  secrets-manager:
+    SONAR_TOKEN: "sonarqube-token:squ_7c5fa6ce1566f90c99bed6fb2ccc5d1a97998f24"
+
+phases:
+  install:
+    commands:
+      - echo Installing required tools
+      - apt-get update -y
+      - apt-get install -y wget unzip git curl
+
+      - echo Installing Trivy
+      - wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+      - echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" > /etc/apt/sources.list.d/trivy.list
+      - apt-get update -y
+      - apt-get install -y trivy
+
+  pre_build:
+    commands:
+      - echo Setting image variables
+      - ECR_REGISTRY=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+      - IMAGE_NAME=$ECR_REGISTRY/$ECR_REPO_NAME
+      - SHORT_COMMIT=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - IMAGE_TAG=$CODEBUILD_BUILD_NUMBER-$SHORT_COMMIT
+
+      - echo Image Name is $IMAGE_NAME
+      - echo Image Tag is $IMAGE_TAG
+
+      - echo Logging in to ECR
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+
+  build:
+    commands:
+      - echo Checking tools
+      - java -version
+      - mvn -v
+      - docker --version
+      - aws --version
+      - trivy --version
+
+      - echo Running unit tests
+      - mvn test
+
+      - echo Running SonarQube SAST
+      - mvn clean verify sonar:sonar -Dsonar.projectKey=$SONAR_PROJECT_KEY -Dsonar.projectName=$SONAR_PROJECT_NAME -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.token=$SONAR_TOKEN
+
+      - echo Running OWASP Dependency Check
+      - mkdir -p dependency-check-data
+      - mvn org.owasp:dependency-check-maven:check -Dformat=HTML -DfailBuildOnCVSS=7 -DdataDirectory=$(pwd)/dependency-check-data -Dnvd.api.delay=3000 -Dnvd.maxRetryCount=5 -DautoUpdate=true || true
+
+      - echo Building WAR
+      - mvn clean package -DskipTests
+
+      - echo Building Docker image
+      - docker build -t $IMAGE_NAME:$IMAGE_TAG .
+      - docker tag $IMAGE_NAME:$IMAGE_TAG $IMAGE_NAME:latest
+
+      - echo Running Trivy scan
+      - trivy image --severity HIGH,CRITICAL --exit-code 1 $IMAGE_NAME:$IMAGE_TAG
+
+      - echo Running app container for ZAP scan
+      - docker rm -f petclinic-zap-test || true
+      - docker run -d --name petclinic-zap-test -p 8081:8080 $IMAGE_NAME:$IMAGE_TAG
+      - sleep 40
+
+      - echo Running ZAP scan
+      - mkdir -p zap-report
+      - ZAP_TARGET="http://host.docker.internal:8081"
+
+      - |
+        if [ "$ZAP_SCAN_TYPE" = "Baseline" ]; then
+          docker run --rm \
+            --add-host=host.docker.internal:host-gateway \
+            -v $(pwd)/zap-report:/zap/wrk \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py \
+            -t $ZAP_TARGET \
+            -r zap-report.html || true
+        fi
+
+      - |
+        if [ "$ZAP_SCAN_TYPE" = "API" ]; then
+          docker run --rm \
+            --add-host=host.docker.internal:host-gateway \
+            -v $(pwd)/zap-report:/zap/wrk \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-api-scan.py \
+            -t $ZAP_TARGET \
+            -f openapi \
+            -r zap-report.html || true
+        fi
+
+      - |
+        if [ "$ZAP_SCAN_TYPE" = "FULL" ]; then
+          docker run --rm \
+            --add-host=host.docker.internal:host-gateway \
+            -v $(pwd)/zap-report:/zap/wrk \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-full-scan.py \
+            -t $ZAP_TARGET \
+            -r zap-report.html || true
+        fi
+
+      - echo Pushing Docker image to ECR
+      - docker push $IMAGE_NAME:$IMAGE_TAG
+      - docker push $IMAGE_NAME:latest
+
+  post_build:
+    commands:
+      - echo Cleaning ZAP test container
+      - docker rm -f petclinic-zap-test || true
+      - echo Build Number $CODEBUILD_BUILD_NUMBER
+      - echo Commit $SHORT_COMMIT
+      - echo Image Tag $IMAGE_TAG
+      - echo Pipeline completed
+
+artifacts:
+  files:
+    - target/dependency-check-report.html
+    - zap-report/zap-report.html
+  discard-paths: no
