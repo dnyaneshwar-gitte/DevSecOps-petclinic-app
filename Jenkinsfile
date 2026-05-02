@@ -115,14 +115,13 @@ pipeline {
                 trivy image \
                 --severity HIGH,CRITICAL \
                 --format table \
-                --output trivy-report/trivy-report.txt \
-                ${IMAGE_NAME}:${IMAGE_TAG}
-
-                cat trivy-report/trivy-report.txt
+                --no-progress \
+                ${IMAGE_NAME}:${IMAGE_TAG} | tee trivy-report/trivy-report.txt
 
                 trivy image \
                 --severity HIGH,CRITICAL \
                 --exit-code 1 \
+                --no-progress \
                 ${IMAGE_NAME}:${IMAGE_TAG}
                 '''
             }
