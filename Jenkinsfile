@@ -70,17 +70,14 @@ pipeline {
         stage('OWASP Dependency Check') {
             steps {
                 sh '''
-                dependency-check.sh \
-                  --project "petclinic" \
-                  --scan . \
-                  --format HTML \
-                  --out dependency-check-report \
-                  --failOnCVSS 7
+                ./mvnw org.owasp:dependency-check-maven:check \
+                -Dformat=HTML \
+                -DfailBuildOnCVSS=7
                 '''
             }
             post {
                 always {
-                    archiveArtifacts artifacts: 'dependency-check-report/*', allowEmptyArchive: true
+                    archiveArtifacts artifacts: 'target/dependency-check-report.html', allowEmptyArchive: true
                 }
             }
         }
