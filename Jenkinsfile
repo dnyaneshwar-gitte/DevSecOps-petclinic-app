@@ -15,7 +15,7 @@ pipeline {
         AWS_ACCOUNT_ID = '038462753889'
         ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
         IMAGE_NAME = "${ECR_REGISTRY}/${ECR_REPO_NAME}"
-        MVN = 'mvn'
+        MVN = 'Maven'
     }
 
     stages {
