@@ -10,7 +10,7 @@ env:
     SONAR_PROJECT_NAME: devsecops-petclinic
     ZAP_SCAN_TYPE: Baseline
   secrets-manager:
-    SONAR_TOKEN: "sonarqube-token:squ_7c5fa6ce1566f90c99bed6fb2ccc5d1a97998f24"
+    SONAR_TOKEN: "sonarqube-token:SONAR_TOKEN"
 
 
 phases:
