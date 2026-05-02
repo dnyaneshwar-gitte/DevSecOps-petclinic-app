@@ -70,9 +70,15 @@ pipeline {
         stage('OWASP Dependency Check') {
             steps {
                 sh '''
+                mkdir -p dependency-check-data
+
                 ${MVN} org.owasp:dependency-check-maven:check \
                 -Dformat=HTML \
-                -DfailBuildOnCVSS=7
+                -DfailBuildOnCVSS=7 \
+                -DdataDirectory=$(pwd)/dependency-check-data \
+                -Dnvd.api.delay=3000 \
+                -Dnvd.maxRetryCount=5 \
+                -DautoUpdate=true
                 '''
             }
             post {
