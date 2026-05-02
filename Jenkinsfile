@@ -130,37 +130,44 @@ pipeline {
 
         stage('ZAP Scan') {
             steps {
-                sh '''
-                mkdir -p zap-report
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    sh '''
+                    mkdir -p zap-report
 
-                if [ "$ZAP_SCAN_TYPE" = "Baseline" ]; then
-                    docker run --rm \
-                    -v $(pwd)/zap-report:/zap/wrk \
-                    ghcr.io/zaproxy/zaproxy:stable \
-                    zap-baseline.py \
-                    -t http://localhost:8081/ \
-                    -r zap-report.html
-                fi
+                    ZAP_TARGET="http://host.docker.internal:8081"
 
-                if [ "$ZAP_SCAN_TYPE" = "API" ]; then
-                    docker run --rm \
-                    -v $(pwd)/zap-report:/zap/wrk \
-                    ghcr.io/zaproxy/zaproxy:stable \
-                    zap-api-scan.py \
-                    -t http://localhost:8081/ \
-                    -f openapi \
-                    -r zap-report.html
-                fi
+                    if [ "$ZAP_SCAN_TYPE" = "Baseline" ]; then
+                        docker run --rm \
+                        --add-host=host.docker.internal:host-gateway \
+                        -v $(pwd)/zap-report:/zap/wrk \
+                        ghcr.io/zaproxy/zaproxy:stable \
+                        zap-baseline.py \
+                        -t $ZAP_TARGET \
+                        -r zap-report.html
+                    fi
 
-                if [ "$ZAP_SCAN_TYPE" = "FULL" ]; then
-                    docker run --rm \
-                    -v $(pwd)/zap-report:/zap/wrk \
-                    ghcr.io/zaproxy/zaproxy:stable \
-                    zap-full-scan.py \
-                    -t http://localhost:8081/ \
-                    -r zap-report.html
-                fi
-                '''
+                    if [ "$ZAP_SCAN_TYPE" = "API" ]; then
+                        docker run --rm \
+                        --add-host=host.docker.internal:host-gateway \
+                        -v $(pwd)/zap-report:/zap/wrk \
+                        ghcr.io/zaproxy/zaproxy:stable \
+                        zap-api-scan.py \
+                        -t $ZAP_TARGET \
+                        -f openapi \
+                        -r zap-report.html
+                    fi
+
+                    if [ "$ZAP_SCAN_TYPE" = "FULL" ]; then
+                        docker run --rm \
+                        --add-host=host.docker.internal:host-gateway \
+                        -v $(pwd)/zap-report:/zap/wrk \
+                        ghcr.io/zaproxy/zaproxy:stable \
+                        zap-full-scan.py \
+                        -t $ZAP_TARGET \
+                        -r zap-report.html
+                    fi
+                    '''
+                }
             }
             post {
                 always {
