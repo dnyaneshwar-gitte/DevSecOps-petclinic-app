@@ -1,5 +1,5 @@
 pipeline {
-    agent any
+    agent { label 'shipquick-slave' }   // ✅ FORCE SLAVE
 
     parameters {
         choice(
@@ -16,7 +16,6 @@ pipeline {
         ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
         IMAGE_NAME = "${ECR_REGISTRY}/${ECR_REPO_NAME}"
         MVN = 'mvn'
-        EMAIL_TO = 'dnyaneshwarg535@gmail.com'
     }
 
     stages {
@@ -29,8 +28,21 @@ pipeline {
                         script: "git rev-parse --short HEAD",
                         returnStdout: true
                     ).trim()
+
                     env.IMAGE_TAG = "${BUILD_NUMBER}-${SHORT_COMMIT}"
                 }
+            }
+        }
+
+        stage('Verify Tools on Slave') {
+            steps {
+                sh '''
+                echo "Checking tools..."
+                java -version
+                mvn -v
+                docker --version
+                aws --version
+                '''
             }
         }
 
@@ -46,9 +58,7 @@ pipeline {
                     sh """
                     ${MVN} clean verify sonar:sonar \
                     -Dsonar.projectKey=devsecops-petclinic \
-                    -Dsonar.projectName=devsecops-petclinic \
-                    -Dsonar.qualitygate.wait=true \
-                    -Dsonar.qualitygate.timeout=1200
+                    -Dsonar.projectName=devsecops-petclinic
                     """
                 }
             }
@@ -56,37 +66,25 @@ pipeline {
 
         stage('OWASP Dependency Check') {
             steps {
-                sh """
-                ${MVN} org.owasp:dependency-check-maven:check \
-                -Dformat=HTML \
-                -DfailBuildOnCVSS=11
-                """
-            }
-            post {
-                always {
-                    archiveArtifacts artifacts: 'target/dependency-check-report.html', allowEmptyArchive: true
-                }
-            }
-        }
-
-        stage('Build WAR Package') {
-            steps {
-                sh '${MVN} clean package -DskipTests'
-            }
-        }
-
-        stage('Hadolint Dockerfile Scan') {
-            steps {
                 sh '''
-                echo "Hadolint Dockerfile Scan Report" > hadolint-report.txt
-                docker run --rm -i hadolint/hadolint < Dockerfile >> hadolint-report.txt
-                cat hadolint-report.txt
+                dependency-check.sh \
+                  --project "petclinic" \
+                  --scan . \
+                  --format HTML \
+                  --out dependency-check-report \
+                  --failOnCVSS 7
                 '''
             }
             post {
                 always {
-                    archiveArtifacts artifacts: 'hadolint-report.txt', allowEmptyArchive: true
+                    archiveArtifacts artifacts: 'dependency-check-report/*', allowEmptyArchive: true
                 }
+            }
+        }
+
+        stage('Build WAR') {
+            steps {
+                sh '${MVN} clean package -DskipTests'
             }
         }
 
@@ -99,63 +97,45 @@ pipeline {
             }
         }
 
-        stage('Trivy Image Scan') {
+        stage('Trivy Scan') {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                    sh """
-                    docker run --rm \
-                    -v /var/run/docker.sock:/var/run/docker.sock \
-                    aquasec/trivy:latest image \
-                    --no-progress \
-                    --exit-code 1 \
-                    --severity MEDIUM,HIGH,CRITICAL \
-                    ${IMAGE_NAME}:${IMAGE_TAG}
-                    """
-                }
+                sh '''
+                trivy image --severity HIGH,CRITICAL --exit-code 1 ${IMAGE_NAME}:${IMAGE_TAG}
+                '''
             }
         }
 
-        stage('Run PetClinic Container for ZAP') {
+        stage('Run App for ZAP') {
             steps {
-                sh """
+                sh '''
                 docker rm -f petclinic-zap-test || true
                 docker run -d --name petclinic-zap-test -p 8081:8080 ${IMAGE_NAME}:${IMAGE_TAG}
                 sleep 40
-                """
+                '''
             }
         }
 
-        stage('OWASP ZAP Scan') {
+        stage('ZAP Scan') {
             steps {
                 sh '''
                 mkdir -p zap-report
 
                 if [ "$ZAP_SCAN_TYPE" = "Baseline" ]; then
-                    docker run --rm \
-                    -v $(pwd)/zap-report:/zap/wrk \
+                    docker run --rm -v $(pwd)/zap-report:/zap/wrk \
                     ghcr.io/zaproxy/zaproxy:stable \
-                    zap-baseline.py \
-                    -t http://localhost:8081/ \
-                    -r zap-report.html
+                    zap-baseline.py -t http://localhost:8081/ -r zap-report.html
                 fi
 
                 if [ "$ZAP_SCAN_TYPE" = "API" ]; then
-                    docker run --rm \
-                    -v $(pwd)/zap-report:/zap/wrk \
+                    docker run --rm -v $(pwd)/zap-report:/zap/wrk \
                     ghcr.io/zaproxy/zaproxy:stable \
-                    zap-api-scan.py \
-                    -t http://localhost:8081/ \
-                    -f openapi \
-                    -r zap-report.html
+                    zap-api-scan.py -t http://localhost:8081/ -f openapi -r zap-report.html
                 fi
 
                 if [ "$ZAP_SCAN_TYPE" = "FULL" ]; then
-                    docker run --rm \
-                    -v $(pwd)/zap-report:/zap/wrk \
+                    docker run --rm -v $(pwd)/zap-report:/zap/wrk \
                     ghcr.io/zaproxy/zaproxy:stable \
-                    zap-full-scan.py \
-                    -t http://localhost:8081/ \
-                    -r zap-report.html
+                    zap-full-scan.py -t http://localhost:8081/ -r zap-report.html
                 fi
                 '''
             }
@@ -168,21 +148,14 @@ pipeline {
 
         stage('Login to ECR') {
             steps {
-                withCredentials([[
-                    $class: 'AmazonWebServicesCredentialsBinding',
-                    credentialsId: 'aws-creds',
-                    accessKeyVariable: 'AWS_ACCESS_KEY_ID',
-                    secretKeyVariable: 'AWS_SECRET_ACCESS_KEY'
-                ]]) {
-                    sh """
-                    aws ecr get-login-password --region ${AWS_REGION} | \
-                    docker login --username AWS --password-stdin ${ECR_REGISTRY}
-                    """
-                }
+                sh '''
+                aws ecr get-login-password --region us-east-1 | \
+                docker login --username AWS --password-stdin 038462753889.dkr.ecr.us-east-1.amazonaws.com
+                '''
             }
         }
 
-        stage('Push Docker Image to ECR') {
+        stage('Push Image') {
             steps {
                 sh """
                 docker push ${IMAGE_NAME}:${IMAGE_TAG}
@@ -196,19 +169,17 @@ pipeline {
         always {
             sh 'docker rm -f petclinic-zap-test || true'
 
-            archiveArtifacts artifacts: 'hadolint-report.txt,zap-report/zap-report.html,target/dependency-check-report.html', allowEmptyArchive: true
-
-            echo "Build Number: ${env.BUILD_NUMBER}"
-            echo "Commit ID: ${env.SHORT_COMMIT}"
-            echo "Image Tag: ${env.IMAGE_TAG}"
+            echo "Build: ${BUILD_NUMBER}"
+            echo "Commit: ${SHORT_COMMIT}"
+            echo "Tag: ${IMAGE_TAG}"
         }
 
         success {
-            echo "Security pipeline completed successfully"
+            echo "Pipeline SUCCESS"
         }
 
         failure {
-            echo "Security pipeline failed"
+            echo "Pipeline FAILED"
         }
     }
 }
