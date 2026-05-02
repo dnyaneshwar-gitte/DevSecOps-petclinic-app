@@ -9,9 +9,15 @@ env:
     SONAR_PROJECT_KEY: devsecops-petclinic
     SONAR_PROJECT_NAME: devsecops-petclinic
     ZAP_SCAN_TYPE: Baseline
+    OWASP_DATA_DIR: /root/dependency-check-data
   secrets-manager:
     SONAR_TOKEN: "sonarqube-token:SONAR_TOKEN"
 
+cache:
+  paths:
+    - '/root/.m2/**/*'
+    - '/root/dependency-check-data/**/*'
+    - '/root/.cache/trivy/**/*'
 
 phases:
   install:
@@ -33,10 +39,8 @@ phases:
       - IMAGE_NAME=$ECR_REGISTRY/$ECR_REPO_NAME
       - SHORT_COMMIT=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
       - IMAGE_TAG=$CODEBUILD_BUILD_NUMBER-$SHORT_COMMIT
-
       - echo Image Name is $IMAGE_NAME
       - echo Image Tag is $IMAGE_TAG
-
       - echo Logging in to ECR
       - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
 
@@ -55,9 +59,9 @@ phases:
       - echo Running SonarQube SAST
       - mvn clean verify sonar:sonar -Dsonar.projectKey=$SONAR_PROJECT_KEY -Dsonar.projectName=$SONAR_PROJECT_NAME -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.token=$SONAR_TOKEN
 
-      - echo Running OWASP Dependency Check
-      - mkdir -p dependency-check-data
-      - mvn org.owasp:dependency-check-maven:check -Dformat=HTML -DfailBuildOnCVSS=7 -DdataDirectory=$(pwd)/dependency-check-data -Dnvd.api.delay=3000 -Dnvd.maxRetryCount=5 -DautoUpdate=true || true
+      - echo Running OWASP Dependency Check with cached NVD data
+      - mkdir -p $OWASP_DATA_DIR
+      - mvn org.owasp:dependency-check-maven:check -Dformat=HTML -DfailBuildOnCVSS=7 -DdataDirectory=$OWASP_DATA_DIR -Dnvd.api.delay=3000 -Dnvd.maxRetryCount=5 -DautoUpdate=true || true
 
       - echo Building WAR
       - mvn clean package -DskipTests
@@ -73,7 +77,7 @@ phases:
       - echo "================ TRIVY SCAN END =================="
 
       - echo Running app container for ZAP scan
-      - docker rm -f petclinic-zap-test || true
+      - docker rm -f petclinic-zap-test >/dev/null 2>&1 || true
       - docker run -d --name petclinic-zap-test -p 8081:8080 $IMAGE_NAME:$IMAGE_TAG
       - sleep 40
 
@@ -122,7 +126,7 @@ phases:
   post_build:
     commands:
       - echo Cleaning ZAP test container
-      - docker rm -f petclinic-zap-test || true
+      - docker rm -f petclinic-zap-test >/dev/null 2>&1 || true
       - echo Build Number $CODEBUILD_BUILD_NUMBER
       - echo Commit $SHORT_COMMIT
       - echo Image Tag $IMAGE_TAG
